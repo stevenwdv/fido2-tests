@@ -57,13 +57,27 @@ class TestSignHash(object):
 
     def test_invalid_credential(self, solo: SoloClient, device):
         with pytest.raises(CtapError) as e:
-            solo.sign_hash(b"A" * 70, b"A" * 32, None)
+            solo.sign_hash(b"A" * 70, b"A" * 32, None, "solo-sign-hash:")
         assert e.value.code == CtapError.ERR.INVALID_CREDENTIAL
 
+    def test_custom_rp_id(self, solo, device):
+        _test_sign_hash_impl(solo, device, cose.ES256.ALGORITHM, "sha256", False, None, "solo-sign-hash:abcd")
+
     def test_incorrect_rp_id(self, solo, device):
-        with pytest.raises(CtapError) as e:
-            _test_sign_hash_impl(solo, device, cose.ES256.ALGORITHM, "sha256", False, None, "example.com")
-        assert e.value.code == CtapError.ERR.INVALID_CREDENTIAL
+        incorrect_ids = [
+            "example.com"
+            "solo:"
+            "solo-sign-hash"
+            "solo-sign-hash.com"
+            ":solo-sign-hash"
+            "example.com:"
+            ""
+        ]
+
+        for rp_id in incorrect_ids:
+            with pytest.raises(CtapError) as e:
+                _test_sign_hash_impl(solo, device, cose.ES256.ALGORITHM, "sha256", False, None, rp_id)
+            assert e.value.code == CtapError.ERR.INVALID_CREDENTIAL
 
 
 def _test_sign_hash_impl(
@@ -73,10 +87,10 @@ def _test_sign_hash_impl(
         hash_alg: str,
         explicit_prehash: bool,
         trusted_comment: typing.Union[bytes, None] = None,
-        rp_id: str = "solo:sign-hash"
+        rp_id: str = "solo-sign-hash:"
 ):
     req = FidoRequest(
-        rp=PublicKeyCredentialRpEntity(rp_id, "Hash signing"),
+        rp=PublicKeyCredentialRpEntity(rp_id, "Solo hash signing"),
         key_params=[PublicKeyCredentialParameters(PublicKeyCredentialType.PUBLIC_KEY, alg)])
 
     reg: AttestationObject = device.sendMC(*req.toMC())
@@ -84,8 +98,8 @@ def _test_sign_hash_impl(
 
     message = b"ABCD"
     digest = hashlib.new(hash_alg, message).digest()
-    signatures = solo.sign_hash(credential.credential_id, digest, None, trusted_comment)
-    print(credential.credential_id, len(credential.credential_id))
+    signatures = solo.sign_hash(credential.credential_id, digest, None, rp_id, trusted_comment)
+
     credential.public_key.verify(digest if explicit_prehash else message, signatures[1])
     if trusted_comment is not None:
         credential.public_key.verify(signatures[1] + trusted_comment, signatures[2])
