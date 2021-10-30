@@ -5,7 +5,8 @@ import typing
 import pytest
 import fido2.cose as cose
 from fido2.ctap2 import CtapError, AttestationObject, AttestedCredentialData
-from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialParameters, PublicKeyCredentialType
+from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialParameters, PublicKeyCredentialType, \
+    PublicKeyCredentialDescriptor
 
 from tests.conftest import TestDevice
 
@@ -55,7 +56,7 @@ class TestSignHash(object):
             _test_sign_hash_impl(solo, device, cose.EdDSA.ALGORITHM, "blake2b", True, b"A" * 129)
         assert e.value.code == CtapError.ERR.LIMIT_EXCEEDED
 
-    def test_invalid_credential(self, solo: SoloClient, device):
+    def test_invalid_credential(self, solo: SoloClient):
         with pytest.raises(CtapError) as e:
             solo.sign_hash(b"A" * 70, b"A" * 32, None, "solo-sign-hash:")
         assert e.value.code == CtapError.ERR.INVALID_CREDENTIAL
@@ -77,6 +78,18 @@ class TestSignHash(object):
         for rp_id in incorrect_ids:
             with pytest.raises(CtapError) as e:
                 _test_sign_hash_impl(solo, device, cose.ES256.ALGORITHM, "sha256", False, None, rp_id)
+            assert e.value.code == CtapError.ERR.INVALID_CREDENTIAL
+
+    def test_sign_hash_rp_id_with_get_assertion(self, device: TestDevice):
+        for rp_id in ["solo-sign-hash:", "solo-sign-hash:abcd"]:
+            mc_req = FidoRequest(rp=PublicKeyCredentialRpEntity(rp_id, "Solo hash signing"))
+            reg: AttestationObject = device.sendMC(*mc_req.toMC())
+            credential: AttestedCredentialData = reg.auth_data.credential_data
+
+            ga_req = FidoRequest(mc_req, allow_list=[
+                PublicKeyCredentialDescriptor(PublicKeyCredentialType.PUBLIC_KEY, credential.credential_id)])
+            with pytest.raises(CtapError) as e:
+                device.sendGA(*ga_req.toGA())
             assert e.value.code == CtapError.ERR.INVALID_CREDENTIAL
 
 
@@ -103,4 +116,3 @@ def _test_sign_hash_impl(
     credential.public_key.verify(digest if explicit_prehash else message, signatures[1])
     if trusted_comment is not None:
         credential.public_key.verify(signatures[1] + trusted_comment, signatures[2])
-
